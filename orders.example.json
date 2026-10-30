@@ -1,0 +1,11 @@
+{
+  "credentials_env": ".env",
+  "days": 30,
+  "targets": [
+    {
+      "spreadsheet": "SPREADSHEET_ID",
+      "gid": 0,
+      "sheet": "EXPORT_SHEET_TITLE"
+    }
+  ]
+}
