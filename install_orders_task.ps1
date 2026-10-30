@@ -1,5 +1,5 @@
 ﻿param(
-    [string]$TaskName = 'WB Orders to Google Sheets - Hourly'
+    [string]$TaskName = 'WB Orders to Google Sheets - Daily 08 and 20 MSK'
 )
 $ErrorActionPreference = 'Stop'
 $project = $PSScriptRoot
@@ -17,12 +17,28 @@ if ($existing) {
         throw 'A different task already uses this name; it will not be replaced'
     }
 }
+$legacyName = 'WB Orders to Google Sheets - Hourly'
+$legacy = $null
+if ($TaskName -ne $legacyName) {
+    $legacy = Get-ScheduledTask -TaskName $legacyName -ErrorAction SilentlyContinue
+    if ($legacy -and ($legacy.Actions.Count -ne 1 -or $legacy.Actions[0].Execute -ne $python -or $legacy.Actions[0].Arguments -ne $arguments)) {
+        throw 'A different legacy hourly task exists; it will not be removed'
+    }
+    if ($legacy -and $legacy.State -eq 'Running') { throw 'Wait until the active hourly export completes before migration' }
+}
 $action = New-ScheduledTaskAction -Execute $python -Argument $arguments -WorkingDirectory $project
-$nextHour = (Get-Date).Date.AddHours((Get-Date).Hour + 1)
-$trigger = New-ScheduledTaskTrigger -Once -At $nextHour -RepetitionInterval (New-TimeSpan -Hours 1)
+$triggers = @((New-ScheduledTaskTrigger -Daily -At '08:00'), (New-ScheduledTaskTrigger -Daily -At '20:00'))
 $settings = New-ScheduledTaskSettingsSet -StartWhenAvailable -WakeToRun -MultipleInstances IgnoreNew -ExecutionTimeLimit (New-TimeSpan -Minutes 30) -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 5) -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
 $identity = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
 $principal = New-ScheduledTaskPrincipal -UserId $identity -LogonType Interactive -RunLevel Limited
-Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger $trigger -Settings $settings -Principal $principal -Description 'Hourly reconciled WB orders export to explicitly configured sheets. Requires an interactive Windows login.' -Force | Out-Null
+Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger $triggers -Settings $settings -Principal $principal -Description 'WB orders export daily at 08:00 and 20:00 Moscow time. Requires an interactive Windows login.' -Force | Out-Null
+if ($legacy) {
+    $created = Get-ScheduledTask -TaskName $TaskName -ErrorAction Stop
+    if ($created.Triggers.Count -ne 2) { throw 'Daily task was not registered correctly; hourly task retained' }
+    $runs = Join-Path $project 'runs'
+    New-Item -ItemType Directory -Path $runs -Force | Out-Null
+    Export-ScheduledTask -TaskName $legacyName | Set-Content -LiteralPath (Join-Path $runs 'orders-previous-task.xml') -Encoding UTF8
+    Unregister-ScheduledTask -TaskName $legacyName -Confirm:$false
+}
 $info = Get-ScheduledTaskInfo -TaskName $TaskName
 [pscustomobject]@{TaskName=$TaskName;NextRunTime=$info.NextRunTime.ToString('yyyy-MM-dd HH:mm:ss');UserMustBeLoggedIn=$true} | ConvertTo-Json -Compress
