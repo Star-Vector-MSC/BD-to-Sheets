@@ -1,0 +1,9 @@
+{
+  "credentials_env": ".env",
+  "days": 180,
+  "target": {
+    "spreadsheet": "SPREADSHEET_ID",
+    "gid": 0,
+    "sheet": "SHEET_TITLE"
+  }
+}
