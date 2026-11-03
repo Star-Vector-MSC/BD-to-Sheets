@@ -102,8 +102,17 @@ class Sheets:
         self.session = AuthorizedSession(credentials)
 
     def api(self, method, url, **kwargs):
+        import requests
+        # Все запросы скрипта задают абсолютное состояние (значения, размер сетки,
+        # фильтр, очистка диапазона), поэтому повтор после таймаута безопасен.
         for attempt in range(5):
-            response = self.session.request(method, url, timeout=120, **kwargs)
+            try:
+                response = self.session.request(method, url, timeout=120, **kwargs)
+            except (requests.exceptions.Timeout, requests.exceptions.ConnectionError):
+                if attempt == 4:
+                    raise
+                time.sleep(15 * (attempt + 1))
+                continue
             if response.status_code in (429, 500, 502, 503, 504) and attempt < 4:
                 time.sleep(3 * (attempt + 1))
                 continue

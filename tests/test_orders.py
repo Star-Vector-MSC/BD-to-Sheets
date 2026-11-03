@@ -1,6 +1,6 @@
 ﻿import unittest
 from datetime import date, datetime, timezone
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 from export_orders import HEADERS, Sheets, make_rows, period
 from update_prices import plan_changes
@@ -48,6 +48,42 @@ class OrderSnapshotTests(unittest.TestCase):
         self.assertEqual((start, end), (date(2026, 9, 30), date(2026, 10, 30)))
         with self.assertRaises(ValueError):
             period(0)
+
+
+class SheetRetryTests(unittest.TestCase):
+    def client(self, *results):
+        client = Sheets.__new__(Sheets)
+        client.session = Mock()
+        client.session.request = Mock(side_effect=list(results))
+        return client
+
+    @staticmethod
+    def ok():
+        response = Mock(status_code=200, ok=True)
+        response.json.return_value = {'done': True}
+        return response
+
+    def test_get_is_retried_after_read_timeout(self):
+        import requests
+        client = self.client(requests.exceptions.ReadTimeout(), self.ok())
+        with patch('export_orders.time.sleep') as sleep:
+            self.assertEqual(client.api('GET', 'https://example/sheet'), {'done': True})
+        self.assertEqual(client.session.request.call_count, 2)
+        sleep.assert_called_once_with(15)
+
+    def test_batch_update_is_retried_after_timeout(self):
+        import requests
+        client = self.client(requests.exceptions.ReadTimeout(), self.ok())
+        with patch('export_orders.time.sleep'):
+            client.api('POST', 'https://example/sheet:batchUpdate', json={})
+        self.assertEqual(client.session.request.call_count, 2)
+
+    def test_get_gives_up_after_five_timeouts(self):
+        import requests
+        client = self.client(*[requests.exceptions.ConnectionError()] * 5)
+        with patch('export_orders.time.sleep'), self.assertRaises(requests.exceptions.ConnectionError):
+            client.api('GET', 'https://example/sheet')
+        self.assertEqual(client.session.request.call_count, 5)
 
 
 class SheetWriteTests(unittest.TestCase):
